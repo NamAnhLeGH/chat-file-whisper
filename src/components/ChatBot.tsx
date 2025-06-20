@@ -18,6 +18,7 @@ const ChatBot = () => {
   ]);
   const [input, setInput] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [serverUrl, setServerUrl] = useState('http://localhost/your-path/your-php-file.php'); // Update this
   const fileRef = useRef<HTMLInputElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
 
@@ -27,17 +28,74 @@ const ChatBot = () => {
     }
   }, [messages]);
 
+  const convertFileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        // Remove the data:type;base64, prefix to get pure base64
+        const base64 = result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const sendToPhpServer = async (message: string, fileData?: { name: string; size: number; base64: string }) => {
+    try {
+      const formData = new FormData();
+      
+      // Add required fields for your PHP server
+      formData.append('CHAT_TEXT', message);
+      formData.append('page', 'chatbot'); // You can customize this
+      
+      if (fileData) {
+        formData.append('FILE_NAME', fileData.name);
+        formData.append('FILE_SIZE', fileData.size.toString());
+        formData.append('FILE_BASE64', fileData.base64);
+      }
+
+      console.log('🚀 Sending to PHP server:', {
+        CHAT_TEXT: message,
+        FILE_NAME: fileData?.name || '',
+        FILE_SIZE: fileData?.size || 0,
+        FILE_BASE64: fileData?.base64 ? 'base64 data present' : '',
+        page: 'chatbot'
+      });
+
+      const response = await fetch(serverUrl, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.text();
+      console.log('📨 PHP Server Response:', result);
+      
+      return result;
+    } catch (error) {
+      console.error('❌ Error sending to PHP server:', error);
+      return 'Error connecting to server';
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() && !file) return;
 
-    // Log to console
+    // Log to console (for debugging)
     console.log('💬 Message:', input);
+    
+    let fileData;
     if (file) {
       console.log('📁 File:', file.name, file.size, 'bytes');
-      const reader = new FileReader();
-      reader.onload = () => console.log('📄 File content (Base64):', reader.result);
-      reader.readAsDataURL(file);
+      const base64 = await convertFileToBase64(file);
+      fileData = {
+        name: file.name,
+        size: file.size,
+        base64: base64
+      };
+      console.log('📄 File Base64 length:', base64.length);
     }
 
     // Add user message
@@ -49,11 +107,14 @@ const ChatBot = () => {
     };
     setMessages(prev => [...prev, userMsg]);
 
-    // Bot response
+    // Send to PHP server
+    const serverResponse = await sendToPhpServer(input, fileData);
+
+    // Add server response as bot message
     setTimeout(() => {
       const botMsg: Message = {
         id: (Date.now() + 1).toString(),
-        text: file ? `Got your message and file "${file.name}"!` : 'Thanks for your message!',
+        text: serverResponse || 'Server response received',
         isUser: false
       };
       setMessages(prev => [...prev, botMsg]);
@@ -69,7 +130,14 @@ const ChatBot = () => {
     <div className="max-w-2xl mx-auto h-screen flex flex-col bg-white">
       {/* Header */}
       <div className="p-4 border-b">
-        <h1 className="text-xl font-bold">Simple ChatBot</h1>
+        <h1 className="text-xl font-bold">PHP ChatBot</h1>
+        <input
+          type="text"
+          value={serverUrl}
+          onChange={(e) => setServerUrl(e.target.value)}
+          placeholder="PHP Server URL"
+          className="w-full mt-2 p-1 text-xs border rounded"
+        />
       </div>
 
       {/* Messages */}
@@ -84,7 +152,7 @@ const ChatBot = () => {
                 ? 'bg-blue-500 text-white' 
                 : 'bg-gray-200 text-black'
             }`}>
-              <p>{msg.text}</p>
+              <p className="whitespace-pre-wrap">{msg.text}</p>
               {msg.file && (
                 <div className="mt-2 text-xs opacity-75">
                   📎 {msg.file.name} ({Math.round(msg.file.size/1024)}KB)
